@@ -1,0 +1,3 @@
+COMPONENT=hiddenTerminalAppC
+include $(MAKERULES)
+
