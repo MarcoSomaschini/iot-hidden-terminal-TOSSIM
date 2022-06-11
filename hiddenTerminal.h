@@ -7,16 +7,13 @@
 
 //payload of the msg
 typedef nx_struct my_msg {
-	//field 1
-	//field 2
-	//field 3
+	//message type (CONTENT, RTS, CTS)
+	//sender id
+	//num of retries (only CONTENT msgs)
+	//payload (rng) (only CONTENT msgs)
 } my_msg_t;
 
 #define REQ 1
 #define RESP 2 
-
-enum{
-AM_MY_MSG = 6,
-};
 
 #endif

@@ -25,47 +25,39 @@ module hiddenTerminalC {
 
 } implementation {
 
-  uint8_t last_digit;
-  uint8_t counter=0;
-  uint8_t rec_id;
+  // Lambda associated with the sender motes
+  uint8_t lambda[];
+  // Packet Error Rate of each sender mote
+  uint8_t per[];
+  
   message_t packet;
 
-  void sendReq();
-  void sendResp();
-  
-  
-  //***************** Send request function ********************//
-  void sendReq() {
-	/* This function is called when we want to send a request
-	 *
-	 * STEPS:
-	 * 1. Prepare the msg
-	 * 2. Set the ACK flag for the message using the PacketAcknowledgements interface
-	 *     (read the docs)
-	 * 3. Send an UNICAST message to the correct node
-	 * X. Use debug statements showing what's happening (i.e. message fields)
-	 */
- }        
-
-  //****************** Task send response *****************//
-  void sendResp() {
-  	/* This function is called when we receive the REQ message.
-  	 * Nothing to do here. 
-  	 * `call Read.read()` reads from the fake sensor.
-  	 * When the reading is done it raises the event read done.
-  	 */
-	call Read.read();
-  }
 
   //***************** Boot interface ********************//
   event void Boot.booted() {
-	dbg("boot","Application booted.\n");
-	/* Fill it ... */
+    dbg("boot","Application booted. ID is %d\n", TOS_NODE_ID);
+
+    // From here we just switch on the radio
+    call SplitControl.start();
   }
 
   //***************** SplitControl interface ********************//
-  event void SplitControl.startDone(error_t err){
-    /* Fill it ... */
+  event void SplitControl.startDone(error_t err) {
+    if (err != SUCCESS) {
+		dbg("startDone","Mote %d failed to start, retrying...\n", TOS_NODE_ID);
+
+		return call SplitControl.start();
+    }
+    
+    if (TOS_NODE_ID == 1) {
+    	// This node is elected as BASE STATION
+    }
+    else {
+    	// The other nodes are SENDER MOTES
+    	
+    	// Generate first inter-arrival time according to mote's lambda
+		// Set first Timer to start routine		
+    }
   }
   
   event void SplitControl.stopDone(error_t err){
@@ -74,10 +66,7 @@ module hiddenTerminalC {
 
   //***************** MilliTimer interface ********************//
   event void MilliTimer.fired() {
-	/* This event is triggered every time the timer fires.
-	 * When the timer fires, we send a request
-	 * Fill this part...
-	 */
+	// Generate and send packet
   }
   
 
@@ -92,7 +81,14 @@ module hiddenTerminalC {
 	 * 2b. Otherwise, send again the request
 	 * X. Use debug statements showing what's happening (i.e. message fields)
 	 */
+	// MOTES ONLY
+	 
+	// Wait for ACK, resend if not acked
+
+	// Simulate new inter-arrival time
+	// Set new Timer
   }
+  
 
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf,void* payload, uint8_t len) {
@@ -104,18 +100,11 @@ module hiddenTerminalC {
 	 * 3. If a request is received, send the response
 	 * X. Use debug statements showing what's happening (i.e. message fields)
 	 */
-
+	// STATION ONLY
+	
+	// Inspect message and update mote's PER	
   }
   
-  //************************* Read interface **********************//
-  event void Read.readDone(error_t result, uint16_t data) {
-	/* This event is triggered when the fake sensor finishes to read (after a Read.read()) 
-	 *
-	 * STEPS:
-	 * 1. Prepare the response (RESP)
-	 * 2. Send back (with a unicast message) the response
-	 * X. Use debug statement showing what's happening (i.e. message fields)
-	 */
-
+  
 }
 
