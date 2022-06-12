@@ -37,11 +37,11 @@ out = sys.stdout;
 print "Activate debug message on channel init"
 t.addChannel("init",out);
 print "Activate debug message on channel boot"
-t.addChannel("boot",out);
+t.addChannel("Boot",out);
 print "Activate debug message on channel radio"
-t.addChannel("radio",out);
+t.addChannel("Radio",out);
 print "Activate debug message on channel radio_send"
-t.addChannel("radio_send",out);
+t.addChannel("Timer",out);
 print "Activate debug message on channel radio_ack"
 t.addChannel("radio_ack",out);
 print "Activate debug message on channel radio_rec"

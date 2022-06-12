@@ -7,7 +7,11 @@
  */
 
 #include "hiddenTerminal.h"
+
 #include "Timer.h"
+#include "Random.h"
+
+#include <math.h>
 
 module hiddenTerminalC {
 
@@ -16,26 +20,34 @@ module hiddenTerminalC {
 	interface Boot; 
 	
     //interfaces for communication
+    interface Receive;
+    interface AMSend;
+    interface SplitControl;
+    interface Packet;
+
 	//interface for timer
+    interface Timer<TMilli> as MilliTimer;
+
     //other interfaces, if needed
-	
-	//interface used to perform sensor reading (to get the value from a sensor)
-	interface Read<uint16_t>;
+    interface Random
+
   }
 
 } implementation {
 
   // Lambda associated with the sender motes
-  uint8_t lambda[];
+  uint8_t lambda[] = {0, LAMBDA_1, LAMBDA_2, LAMBDA_3, LAMBDA_4, LAMBDA_5};
   // Packet Error Rate of each sender mote
-  uint8_t per[];
+  float per[N_MOTES];
   
   message_t packet;
+
+  uint32_t getInterArrivalTimePoisson(uint8_t lambda);
 
 
   //***************** Boot interface ********************//
   event void Boot.booted() {
-    dbg("boot","Application booted. ID is %d\n", TOS_NODE_ID);
+    dbg("Boot","Mote booted. ID is %d\n", TOS_NODE_ID);
 
     // From here we just switch on the radio
     call SplitControl.start();
@@ -44,19 +56,23 @@ module hiddenTerminalC {
   //***************** SplitControl interface ********************//
   event void SplitControl.startDone(error_t err) {
     if (err != SUCCESS) {
-		dbg("startDone","Mote %d failed to start, retrying...\n", TOS_NODE_ID);
+		dbg("Radio","SplitControl %d failed to start, retrying...\n", TOS_NODE_ID);
 
 		return call SplitControl.start();
     }
     
     if (TOS_NODE_ID == 1) {
-    	// This node is elected as BASE STATION
+      // This node is elected as BASE STATION
     }
     else {
-    	// The other nodes are SENDER MOTES
-    	
-    	// Generate first inter-arrival time according to mote's lambda
-		// Set first Timer to start routine		
+      // The other nodes are SENDER MOTES
+
+      // Generate first inter-arrival time according to mote's lambda
+      uint32_t dt = getInterArrivalTimePoisson(lambda(TOS_NODE_ID - 1));
+      dbg("Radio","Timer on mote #%d will trigger in %d\n", TOS_NODE_ID, dt);
+
+	  // Set first Timer to start routine
+      call MilliTimer.startOneShot(dt);
     }
   }
   
@@ -67,6 +83,12 @@ module hiddenTerminalC {
   //***************** MilliTimer interface ********************//
   event void MilliTimer.fired() {
 	// Generate and send packet
+    dbg("Timer","Timer on mote #%d fired!\n", TOS_NODE_ID);
+
+    // TODO Only here for testing
+    uint32_t dt = getInterArrivalTimePoisson(lambda(TOS_NODE_ID - 1));
+    dbg("Timer","Timer on mote #%d will trigger in %d\n", TOS_NODE_ID, dt);
+    call MilliTimer.startOneShot(dt);
   }
   
 
@@ -104,7 +126,16 @@ module hiddenTerminalC {
 	
 	// Inspect message and update mote's PER	
   }
-  
-  
+
+
+  uint32_t getInterArrivalTimePoisson(uint8_t lambda) {
+    float p_unif;
+
+    p_unif = call Random.rand32();
+    p_unif = p_unif / UINT32_MAX
+
+    return (uint32_t) -logf(1 - p_unif) / lambda
+  }
+
 }
 
