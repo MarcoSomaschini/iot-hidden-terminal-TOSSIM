@@ -14,7 +14,7 @@ module hiddenTerminalC {
 
   uses {
   /****** INTERFACES *****/
-	  interface Boot;
+	interface Boot;
 	
     //interfaces for communication
     interface Receive;
@@ -41,7 +41,7 @@ module hiddenTerminalC {
   
   message_t packet;
   // Current sequence number per mote
-  uint16_t seq[] = {0, 0, 0, 0, 0, 0};
+  uint16_t seq[] = {1, 1, 1, 1, 1, 1};
   // Current number of retries per mote
   uint16_t retries[] = {0, 0, 0, 0, 0, 0};
 
@@ -94,9 +94,6 @@ module hiddenTerminalC {
 
   //***************** MilliTimer interface ********************//
   event void MilliTimer.fired() {
-    uint32_t dt;
-    my_msg_t* msg;
-
     dbg("Timer","Mote #%d: Timer fired!\n", TOS_NODE_ID);
 
 	  // Generate and send packet
@@ -119,6 +116,7 @@ module hiddenTerminalC {
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda[TOS_NODE_ID - 1]);
       // Set new Timer
+      call MilliTimer.startOneShot(dt);
       dbg("Timer","Mote #%d: Timer will trigger in %d [ms]\n", TOS_NODE_ID, dt);
     }
     else {
@@ -134,7 +132,7 @@ module hiddenTerminalC {
   
 
   //***************************** Receive interface *****************//
-  event message_t* Receive.receive(message_t* buf,void* payload, uint8_t len) {
+  event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
     /* This event is triggered when a message is received
      *
      * STEPS:
@@ -145,19 +143,21 @@ module hiddenTerminalC {
      */
     // BASE STATION ONLY (as long as no RTS/CTS is used)
     my_msg_t* msg;
+    float n_tot_tries;
 
     if (len != sizeof(my_msg_t)) {
-      dbg("Base Station: Packet received is malformed.");
+      dbg("Radio", "Base Station: Packet received is malformed.\n");
 
       return buf;
     }
 
     msg = (my_msg_t*) payload;
-    dbg("Base Station: Packet n°%d from mote #%d received!", msg->seq_num, msg->sender_id);
+    dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", msg->seq_num, msg->sender_id);
 
     // Inspect message and update mote's PER
-    per[msg->sender_id] = msg->seq_num / ((1 / (1 - per[msg->sender_id])) * (msg->seq_num - 1) + msg->n_retries);
-    dbg("Base Station: Mote #d has a PER of %.1f", per[msg->sender_id] * 100);
+    n_tot_tries = (1 / (1 - per[msg->sender_id])) * (msg->seq_num - 1);
+    per[msg->sender_id] = 1 - msg->seq_num / (n_tot_tries + 1 + msg->n_retries);
+    dbg("Radio", "Base Station: Mote #%d has a PER of %.1f%\n", msg->sender_id, per[msg->sender_id] * 100);
 
     return buf;
   }
@@ -181,8 +181,10 @@ module hiddenTerminalC {
 
 
   void sendNextPacket() {
+	my_msg_t* msg;
+  
     do {
-      msg = (my_msg_t*) call Packet.getPayload(&reqpacket, sizeof(my_msg_t));
+      msg = (my_msg_t*) call Packet.getPayload(&packet, sizeof(my_msg_t));
     }
     while (msg == NULL);
 
@@ -191,8 +193,8 @@ module hiddenTerminalC {
     msg->n_retries = retries[TOS_NODE_ID - 1];
 
     // Set ACK request and send packet to the station
-    if (call PacketAcknowledgements.requestAck(&msg) == SUCCESS) {
-      if (call AMSend.send(BASE_STATION_ID, &msg, sizeof(my_msg_t)) == SUCCESS) {
+    if (call PacketAcknowledgements.requestAck(&packet) == SUCCESS) {
+      if (call AMSend.send(BASE_STATION_ID, &packet, sizeof(my_msg_t)) == SUCCESS) {
         dbg("Timer", "Mote #%d: Packet n°%d sent, waiting for ACK\n", TOS_NODE_ID, msg->seq_num);
 
         return;

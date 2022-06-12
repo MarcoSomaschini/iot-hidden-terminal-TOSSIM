@@ -16,19 +16,19 @@
 // Generic message
 typedef nx_struct my_msg {
 	// Sender id
-  unit8_t sender_id;
+  nx_uint8_t sender_id;
   // Message sequence number
-  uint16_t seq_num;
+  nx_uint16_t seq_num;
 	// Number of retries
-  uint8_t n_retries;
+  nx_uint8_t n_retries;
 } my_msg_t;
 
 // RTS/CTS protocol messages
 typedef nx_struct handshake_msg {
   // Message type (RTS, CTS)
-  uint8_t type;
+  nx_uint8_t type;
   // Sender id
-  unit8_t sender_id;
+  nx_uint8_t sender_id;
 } handshake_msg_t;
 
 enum{
