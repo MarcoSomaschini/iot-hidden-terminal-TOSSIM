@@ -14,21 +14,25 @@ implementation {
 
 /****** COMPONENTS *****/
   components MainC, hiddenTerminalC as App;
-  //add the other components here
+  // Other components
   components ActiveMessageC;
+  components RandomC;
   components new TimerMilliC();
 
+
 /****** INTERFACES *****/
-  //Boot interface
+  // Boot interface
   App.Boot -> MainC.Boot;
 
   /****** Wire the other interfaces down here *****/
-  //Send and Receive interfaces
-  //Radio Control
+  // Send and Receive interfaces
+  // Radio Control
   App.SplitControl -> ActiveMessageC;
-  //Interfaces to access package fields
-  //Timer interface
+  // Interfaces to access package fields
+  // Timer interface
   App.MilliTimer -> TimerMilliC;
+  // RNG
+  App.Random -> RandomC;
 
 }
 
