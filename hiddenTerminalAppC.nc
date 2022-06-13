@@ -18,6 +18,8 @@ implementation {
   components ActiveMessageC;
   components RandomC;
   components new TimerMilliC();
+  components new AMSenderC(AM_MY_MSG);
+  components new AMReceiverC(AM_MY_MSG);
 
 
 /****** INTERFACES *****/
@@ -26,13 +28,18 @@ implementation {
 
   /****** Wire the other interfaces down here *****/
   // Send and Receive interfaces
+  App.Receive -> AMReceiverC;
+  App.AMSend -> AMSenderC;
   // Radio Control
   App.SplitControl -> ActiveMessageC;
   // Interfaces to access package fields
+  App.Packet -> AMSenderC;
   // Timer interface
   App.MilliTimer -> TimerMilliC;
   // RNG
   App.Random -> RandomC;
+  // ACKS
+  App.PacketAcknowledgements -> AMSenderC.Acks;
 
 }
 

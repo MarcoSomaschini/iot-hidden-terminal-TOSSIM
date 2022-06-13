@@ -7,16 +7,14 @@
  */
 
 #include "hiddenTerminal.h"
-
 #include "Timer.h"
-
 #include <math.h>
 
 module hiddenTerminalC {
 
   uses {
   /****** INTERFACES *****/
-	interface Boot; 
+	  interface Boot;
 	
     //interfaces for communication
     interface Receive;
@@ -24,24 +22,33 @@ module hiddenTerminalC {
     interface SplitControl;
     interface Packet;
 
-	//interface for timer
+	  //interface for timer
     interface Timer<TMilli> as MilliTimer;
 
     //other interfaces, if needed
     interface Random;
+    interface PacketAcknowledgements;
 
   }
 
 } implementation {
 
-  // Lambda associated with the sender motes
-  uint32_t lambda[] = {0, LAMBDA_1, LAMBDA_2, LAMBDA_3, LAMBDA_4, LAMBDA_5};
-  // Packet Error Rate of each sender mote
-  float per[N_MOTES];
+  // Lambda associated with the motes
+  uint8_t lambda[] = {0, LAMBDA_1, LAMBDA_2, LAMBDA_3, LAMBDA_4, LAMBDA_5};
+
+  // Packet Error Rate of each mote
+  float per[] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   
   message_t packet;
+  // Current sequence number per mote
+  uint16_t seq[] = {0, 0, 0, 0, 0, 0};
+  // Current number of retries per mote
+  uint16_t retries[] = {0, 0, 0, 0, 0, 0};
 
-  uint32_t getInterArrivalTimePoisson(uint32_t l);
+  // Possion simulation function
+  uint32_t millisToNextPoisson(uint8_t l);
+  // Procedure to generate and send a packet
+  void sendNextPacket();
 
 
   //***************** Boot interface ********************//
@@ -52,88 +59,112 @@ module hiddenTerminalC {
     call SplitControl.start();
   }
 
+
   //***************** SplitControl interface ********************//
   event void SplitControl.startDone(error_t err) {
     uint32_t dt;
   
     if (err != SUCCESS) {
-		dbg("Radio","SplitControl %d failed to start, retrying...\n", TOS_NODE_ID);
+      dbg("Radio","Mote #%d: SplitControl failed to start, retrying...\n", TOS_NODE_ID);
 
-		call SplitControl.start();
-		return;
+		  call SplitControl.start();
+		  return;
     }
     
-    if (TOS_NODE_ID == 1) {
+    if (TOS_NODE_ID == BASE_STATION_ID) {
       // This node is elected as BASE STATION
     }
     else {
       // The other nodes are SENDER MOTES
 
       // Generate first inter-arrival time according to mote's lambda
-      dt = getInterArrivalTimePoisson(lambda[TOS_NODE_ID - 1]);
-      dbg("Radio","Timer on mote #%d will trigger in %d\n", TOS_NODE_ID, dt);
+      dt = millisToNextPoisson(lambda[TOS_NODE_ID - 1]);
+      dbg("Timer","Mote #%d: Timer will trigger in %d [ms]\n", TOS_NODE_ID, dt);
 
-	  // Set first Timer to start routine
+      // Set first Timer to start routine
       call MilliTimer.startOneShot(dt);
     }
   }
+
   
   event void SplitControl.stopDone(error_t err){
     /* Fill it ... */
   }
 
+
   //***************** MilliTimer interface ********************//
   event void MilliTimer.fired() {
-    uint32_t dt;   
-  
-	// Generate and send packet
-    dbg("Timer","Timer on mote #%d fired!\n", TOS_NODE_ID);
+    uint32_t dt;
+    my_msg_t* msg;
 
-    // TODO Only here for testing
-    dt = getInterArrivalTimePoisson(lambda[TOS_NODE_ID - 1]);
-    dbg("Timer","Timer on mote #%d will trigger in %d\n", TOS_NODE_ID, dt);
-    
-    call MilliTimer.startOneShot(dt);
+    dbg("Timer","Mote #%d: Timer fired!\n", TOS_NODE_ID);
+
+	  // Generate and send packet
+    sendNextPacket();
   }
   
 
   //********************* AMSend interface ****************//
   event void AMSend.sendDone(message_t* buf,error_t err) {
-	/* This event is triggered when a message is sent 
-	 *
-	 * STEPS:
-	 * 1. Check if the packet is sent
-	 * 2. Check if the ACK is received (read the docs)
-	 * 2a. If yes, stop the timer according to your id. The program is done
-	 * 2b. Otherwise, send again the request
-	 * X. Use debug statements showing what's happening (i.e. message fields)
-	 */
-	// MOTES ONLY
-	 
-	// Wait for ACK, resend if not acked
+    // MOTES ONLY (as long as no RTS/CTS is used)
+    uint32_t dt;
 
-	// Simulate new inter-arrival time
-	// Set new Timer
+    // Wait for ACK, resend if not acked
+    if (call PacketAcknowledgements.wasAcked(buf) == TRUE) {
+      dbg("Radio", "Mote #%d: ACK for Packet n°%d received!\n", TOS_NODE_ID, seq[TOS_NODE_ID - 1]);
+
+      seq[TOS_NODE_ID - 1] += 1;
+      retries[TOS_NODE_ID - 1] = 0;
+
+      // Simulate new inter-arrival time
+      dt = millisToNextPoisson(lambda[TOS_NODE_ID - 1]);
+      // Set new Timer
+      dbg("Timer","Mote #%d: Timer will trigger in %d [ms]\n", TOS_NODE_ID, dt);
+    }
+    else {
+      dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq[TOS_NODE_ID - 1]);
+
+      retries[TOS_NODE_ID - 1] += 1;
+
+      sendNextPacket();
+    }
+
+    return;
   }
   
 
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf,void* payload, uint8_t len) {
-	/* This event is triggered when a message is received 
-	 *
-	 * STEPS:
-	 * 1. Read the content of the message
-	 * 2. Check if the type is request (REQ)
-	 * 3. If a request is received, send the response
-	 * X. Use debug statements showing what's happening (i.e. message fields)
-	 */
-	// STATION ONLY
-	
-	// Inspect message and update mote's PER	
+    /* This event is triggered when a message is received
+     *
+     * STEPS:
+     * 1. Read the content of the message
+     * 2. Check if the type is request (REQ)
+     * 3. If a request is received, send the response
+     * X. Use debug statements showing what's happening (i.e. message fields)
+     */
+    // BASE STATION ONLY (as long as no RTS/CTS is used)
+    my_msg_t* msg;
+
+    if (len != sizeof(my_msg_t)) {
+      dbg("Base Station: Packet received is malformed.");
+
+      return buf;
+    }
+
+    msg = (my_msg_t*) payload;
+    dbg("Base Station: Packet n°%d from mote #%d received!", msg->seq_num, msg->sender_id);
+
+    // Inspect message and update mote's PER
+    per[msg->sender_id] = msg->seq_num / ((1 / (1 - per[msg->sender_id])) * (msg->seq_num - 1) + msg->n_retries);
+    dbg("Base Station: Mote #d has a PER of %.1f", per[msg->sender_id] * 100);
+
+    return buf;
   }
 
 
-  uint32_t getInterArrivalTimePoisson(uint32_t l) {
+  //******************* Functions *****************//
+  uint32_t millisToNextPoisson(uint8_t l) {
     float p_unif;
     float int_arr_time;
     float milliLambda = (float) l;
@@ -147,6 +178,35 @@ module hiddenTerminalC {
 	
     return (uint32_t) int_arr_time;
   }
+
+
+  void sendNextPacket() {
+    do {
+      msg = (my_msg_t*) call Packet.getPayload(&reqpacket, sizeof(my_msg_t));
+    }
+    while (msg == NULL);
+
+    msg->sender_id = TOS_NODE_ID;
+    msg->seq_num = seq[TOS_NODE_ID - 1];
+    msg->n_retries = retries[TOS_NODE_ID - 1];
+
+    // Set ACK request and send packet to the station
+    if (call PacketAcknowledgements.requestAck(&msg) == SUCCESS) {
+      if (call AMSend.send(BASE_STATION_ID, &msg, sizeof(my_msg_t)) == SUCCESS) {
+        dbg("Timer", "Mote #%d: Packet n°%d sent, waiting for ACK\n", TOS_NODE_ID, msg->seq_num);
+
+        return;
+      }
+    }
+
+    // If something goes wrong, retry
+    dbg("Timer","Mote #%d: Failed to send, retrying...\n");
+    sendNextPacket();
+
+    return;
+  }
+
+
 
 }
 
