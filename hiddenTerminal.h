@@ -13,6 +13,8 @@
 #define LAMBDA_4 4
 #define LAMBDA_5 5
 
+#define LOG_INTERVAL 10
+
 // Generic message
 typedef nx_struct my_msg {
 	// Sender id

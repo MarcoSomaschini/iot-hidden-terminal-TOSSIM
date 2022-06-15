@@ -33,17 +33,19 @@ module hiddenTerminalC {
 
 } implementation {
 
+  // SENDER MOTES
   // Lambda associated with the motes
-  uint8_t lambda[] = {0, LAMBDA_1, LAMBDA_2, LAMBDA_3, LAMBDA_4, LAMBDA_5};
+  uint8_t lambda;
+  uint8_t n_retries = 0;
+  uint16_t seq_num = 1;
 
-  // Packet Error Rate of each mote
-  float per[] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  // BASE_STATION
+  uint8_t counter = 0;
+  // Current sequence number of each mote
+  uint16_t mote_seq_num[] = {0, 0, 0, 0, 0};
+  uint16_t mote_trans[] = {0, 0, 0, 0, 0};
   
   message_t packet;
-  // Current sequence number per mote
-  uint16_t seq[] = {1, 1, 1, 1, 1, 1};
-  // Current number of retries per mote
-  uint16_t retries[] = {0, 0, 0, 0, 0, 0};
 
   // Possion simulation function
   uint32_t millisToNextPoisson(uint8_t l);
@@ -73,13 +75,31 @@ module hiddenTerminalC {
     
     if (TOS_NODE_ID == BASE_STATION_ID) {
       // This node is elected as BASE STATION
+      // Every LOG_INTERVAL (10) secs print motes stats
+      call MilliTimer.startPeriodic(LOG_INTERVAL * 1000);
     }
     else {
       // The other nodes are SENDER MOTES
+      switch (TOS_NODE_ID) {
+        case 2:
+          lambda = LAMBDA_1;
+          break;
+        case 3:
+          lambda = LAMBDA_2;
+          break;
+        case 4:
+          lambda = LAMBDA_3;
+          break;
+        case 5:
+          lambda = LAMBDA_4;
+          break;
+        case 6:
+          lambda = LAMBDA_5;
+          break;
+      }
 
       // Generate first inter-arrival time according to mote's lambda
-      dt = millisToNextPoisson(lambda[TOS_NODE_ID - 1]);
-      dbg("Timer","Mote #%d: Timer will trigger in %d [ms]\n", TOS_NODE_ID, dt);
+      dt = millisToNextPoisson(lambda);
 
       // Set first Timer to start routine
       call MilliTimer.startOneShot(dt);
@@ -94,10 +114,22 @@ module hiddenTerminalC {
 
   //***************** MilliTimer interface ********************//
   event void MilliTimer.fired() {
-    dbg("Timer","Mote #%d: Timer fired!\n", TOS_NODE_ID);
+    if (TOS_NODE_ID == BASE_STATION_ID) {
+      uint8_t id;
 
-	  // Generate and send packet
-    sendNextPacket();
+      counter++;
+
+      for (id = 2; id < 6; id++) {
+        dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / (counter * LOG_INTERVAL));
+      }
+      for (id = 2; id < 6; id++) {
+        dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, mote_seq_num[id - 2]/mote_trans[id - 2] * 100);
+      }
+    }
+    else {
+      // Generate and send packet
+      sendNextPacket();
+    }
   }
   
 
@@ -108,21 +140,20 @@ module hiddenTerminalC {
 
     // Wait for ACK, resend if not acked
     if (call PacketAcknowledgements.wasAcked(buf) == TRUE) {
-      dbg("Radio", "Mote #%d: ACK for Packet n°%d received!\n", TOS_NODE_ID, seq[TOS_NODE_ID - 1]);
+      dbg("Radio", "Mote #%d: ACK for Packet n°%d received!\n", TOS_NODE_ID, seq_num);
 
-      seq[TOS_NODE_ID - 1] += 1;
-      retries[TOS_NODE_ID - 1] = 0;
+      seq_num++;
+      n_retries = 0;
 
       // Simulate new inter-arrival time
-      dt = millisToNextPoisson(lambda[TOS_NODE_ID - 1]);
+      dt = millisToNextPoisson(lambda);
       // Set new Timer
       call MilliTimer.startOneShot(dt);
-      dbg("Timer","Mote #%d: Timer will trigger in %d [ms]\n", TOS_NODE_ID, dt);
     }
     else {
-      dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq[TOS_NODE_ID - 1]);
+      dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
 
-      retries[TOS_NODE_ID - 1] += 1;
+      n_retries++;
 
       sendNextPacket();
     }
@@ -133,17 +164,8 @@ module hiddenTerminalC {
 
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
-    /* This event is triggered when a message is received
-     *
-     * STEPS:
-     * 1. Read the content of the message
-     * 2. Check if the type is request (REQ)
-     * 3. If a request is received, send the response
-     * X. Use debug statements showing what's happening (i.e. message fields)
-     */
     // BASE STATION ONLY (as long as no RTS/CTS is used)
     my_msg_t* msg;
-    float n_tot_tries;
 
     if (len != sizeof(my_msg_t)) {
       dbg("Radio", "Base Station: Packet received is malformed.\n");
@@ -151,13 +173,20 @@ module hiddenTerminalC {
       return buf;
     }
 
+    // Inspect message and update mote's PER
     msg = (my_msg_t*) payload;
     dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", msg->seq_num, msg->sender_id);
 
-    // Inspect message and update mote's PER
-    n_tot_tries = (1 / (1 - per[msg->sender_id])) * (msg->seq_num - 1);
-    per[msg->sender_id] = 1 - msg->seq_num / (n_tot_tries + 1 + msg->n_retries);
-    dbg("Radio", "Base Station: Mote #%d has a PER of %.1f%\n", msg->sender_id, per[msg->sender_id] * 100);
+    if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
+      dbg("Radio", "Base Station: Packet received is a duplicate.\n");
+
+      // What if the duplicate has a different number of retries?
+      mote_trans[msg->sender_id - 2]++;
+    }
+    else {
+      mote_seq_num[msg->sender_id - 2] = msg->seq_num;
+      mote_trans[msg->sender_id - 2] += msg->retries + 1;
+    }
 
     return buf;
   }
@@ -189,8 +218,8 @@ module hiddenTerminalC {
     while (msg == NULL);
 
     msg->sender_id = TOS_NODE_ID;
-    msg->seq_num = seq[TOS_NODE_ID - 1];
-    msg->n_retries = retries[TOS_NODE_ID - 1];
+    msg->seq_num = seq_num;
+    msg->n_retries = n_retries;
 
     // Set ACK request and send packet to the station
     if (call PacketAcknowledgements.requestAck(&packet) == SUCCESS) {
