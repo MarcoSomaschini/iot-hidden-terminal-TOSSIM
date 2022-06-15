@@ -116,14 +116,18 @@ module hiddenTerminalC {
   event void MilliTimer.fired() {
     if (TOS_NODE_ID == BASE_STATION_ID) {
       uint8_t id;
+      float time_elapsed;
 
       counter++;
+      time_elapsed = (float) counter * LOG_INTERVAL;
 
-      for (id = 2; id < 6; id++) {
-        dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / (counter * LOG_INTERVAL));
+      for (id = 2; id < 7; id++) {      
+        dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / time_elapsed);
       }
-      for (id = 2; id < 6; id++) {
-        dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, mote_seq_num[id - 2]/mote_trans[id - 2] * 100);
+      for (id = 2; id < 7; id++) {
+      	float psr = (float) mote_seq_num[id - 2]/mote_trans[id - 2];
+      
+        dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
       }
     }
     else {
@@ -185,7 +189,7 @@ module hiddenTerminalC {
     }
     else {
       mote_seq_num[msg->sender_id - 2] = msg->seq_num;
-      mote_trans[msg->sender_id - 2] += msg->retries + 1;
+      mote_trans[msg->sender_id - 2] += msg->n_retries + 1;
     }
 
     return buf;
