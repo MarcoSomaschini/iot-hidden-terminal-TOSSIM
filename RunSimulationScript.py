@@ -99,8 +99,10 @@ for i in range(1, n_motes + 1):
 
 print "Start simulation with TOSSIM! \n\n\n";
 
-for i in range(0,3000):
-	t.runNextEvent()
+while True:
+    t.runNextEvent()  
+    if t.time() > 60 * t.ticksPerSecond():
+        break
 	
 print "\n\n\nSimulation finished!";
 
