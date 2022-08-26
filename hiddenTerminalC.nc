@@ -47,6 +47,10 @@ module hiddenTerminalC {
   
   message_t packet;
 
+  bool busy = FALSE;
+  uint8_t nb[] = {0, 0, 0};
+  uint8_t be[] = {0, 0, 0};
+
   // Possion simulation function
   uint32_t millisToNextPoisson(uint8_t l);
   // Procedure to generate and send a packet
@@ -149,6 +153,13 @@ module hiddenTerminalC {
       seq_num++;
       n_retries = 0;
 
+      if (TOS_NODE_ID % 2 == 0) {
+        busy = FALSE;
+
+        nb[TOS_NODE_ID / 2 - 1] = 0;
+        be[TOS_NODE_ID / 2 - 1] = 0;
+      }
+
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda);
       // Set new Timer
@@ -214,7 +225,31 @@ module hiddenTerminalC {
 
 
   void sendNextPacket() {
-	my_msg_t* msg;
+    uint8_t pos;
+    uint32_t backoff_time;
+    float p_unif;
+	  my_msg_t* msg;
+
+    if (TOS_NODE_ID % 2 == 0) {
+      if (busy == FALSE) {
+        busy == TRUE
+      }
+      else {
+        dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
+        pos = TOS_NODE_ID / 2 - 1;
+
+        nb[pos]++;
+        if (be[pos] < MAXBE) {
+          be[pos]++;
+        }
+
+        p_unif = call Random.rand16();
+        backoff_time = (uint32_t) (pow(2, be[pos]) * p_unif) / UINT16_MAX;
+
+        call MilliTimer.startOneShot(backoff_time);
+        return;
+      }
+    }
   
     do {
       msg = (my_msg_t*) call Packet.getPayload(&packet, sizeof(my_msg_t));

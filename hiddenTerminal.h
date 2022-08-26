@@ -13,6 +13,9 @@
 #define LAMBDA_4 4
 #define LAMBDA_5 5
 
+#define MAXBE 5
+#define BACKOFFPERIOD 500
+
 #define LOG_INTERVAL 10
 
 // Generic message
