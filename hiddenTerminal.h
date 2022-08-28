@@ -7,17 +7,17 @@
 
 #define BASE_STATION_ID 1
 
-#define LAMBDA_1 20
-#define LAMBDA_2 10
-#define LAMBDA_3 10
+#define LAMBDA_1 5
+#define LAMBDA_2 5
+#define LAMBDA_3 5
 #define LAMBDA_4 5
-#define LAMBDA_5 10
+#define LAMBDA_5 5
 
 #define MAXBE 7
 #define BACKOFFPERIOD 10
 
 #define WAIT_INT 250
-#define STOP_INT 30
+#define STOP_INT 60
 
 #define RTS 0
 #define CTS 1

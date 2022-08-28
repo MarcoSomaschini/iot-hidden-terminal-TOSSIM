@@ -25,10 +25,10 @@ module hiddenTerminalC {
     interface SplitControl;
     interface Packet;
 
-	  //interface for timer
-    interface Timer<TMilli> as StopTimer;
+	//interface for timer
     interface Timer<TMilli> as PoissonTimer;
     interface Timer<TMilli> as WaitTimer;
+    interface Timer<TMilli> as StopTimer;
 
     //other interfaces, if needed
     interface Random;
@@ -51,8 +51,8 @@ module hiddenTerminalC {
   uint8_t be = 0;
 
   bool cts;
-  bool waiting == FALSE;
-  bool busy == FALSE;
+  bool waiting = FALSE;
+  bool busy = FALSE;
 
   // BASE_STATION
   // Current sequence number of each mote
@@ -143,13 +143,26 @@ module hiddenTerminalC {
 
 
   event void WaitTimer.fired() {
-    // MOTES ONLY
-    busy = FALSE;
+  	if (stop == TRUE) {
+      return;
+    }  
+  
+    if (TOS_NODE_ID == BASE_STATION_ID) {
+      dbg("Timer","Base Station: After CTS, nothing was received.\n");
+      cts = TRUE;
+    }
+    else {
+      busy = FALSE;
 
-    if (waiting == TRUE) {
-      waiting = FALSE;
+      if (waiting == TRUE) {
+        dbg("Timer","Mote #%d: CTS was not received, retrying...\n", TOS_NODE_ID);
+        waiting = FALSE;
 
-      sendNextPacket();
+        sendNextPacket();
+      }
+      else {
+      	dbg("Timer","Mote #%d: CTS was not received, stop stalling.\n", TOS_NODE_ID);
+      }
     }
   }
 
@@ -157,14 +170,16 @@ module hiddenTerminalC {
   event void StopTimer.fired() {
     // BASE STATION: Log motes transmissions stats and terminate operations
     uint8_t id;
+    
+    dbg("Timer","%d\n", TOS_NODE_ID);
 
     for (id = 2; id < 7; id++) {
-      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / STOP_INT);
+      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
     }
     for (id = 2; id < 7; id++) {
       float psr = (float) mote_seq_num[id - 2] / mote_trans[id - 2];
 
-      dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
+      dbg("Timer","Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
     }
 
     stop = TRUE;
@@ -173,8 +188,17 @@ module hiddenTerminalC {
 
   //********************* AMSend interface ****************//
   event void AMSend.sendDone(message_t* buf, error_t err) {
-    // MOTES ONLY (as long as no RTS/CTS is used)
     uint32_t dt;
+    
+    if (TOS_NODE_ID == BASE_STATION_ID) {
+    	return;
+    }
+    
+    if (waiting == TRUE) {
+    	return;
+    }
+    
+    cts = FALSE;
 
     // Wait for ACK, resend if not acked
     if (call PacketAcknowledgements.wasAcked(buf) == TRUE) {
@@ -183,11 +207,11 @@ module hiddenTerminalC {
       seq_num++;
       n_retries = 0;
       if (TOS_NODE_ID % 2 == 0) {
-        busy = FALSE;
+        csma_busy = FALSE;
 
         nb = 0;
         be = 0;
-    }
+      }
 
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda);
@@ -199,11 +223,11 @@ module hiddenTerminalC {
 
       n_retries++;
       if (TOS_NODE_ID % 2 == 0) {
-        busy = FALSE;
+        csma_busy = FALSE;
 
         nb = 0;
         be = 0;
-    }
+      }
 
       sendNextPacket();
     }
@@ -224,7 +248,7 @@ module hiddenTerminalC {
         case RTS:
           // Send CTS
           if (cts == FALSE) {
-            return;
+            return buf;
           }
           dbg("Radio", "Base Station: RTS received from mote #%d\n", req->sender_id);
 
@@ -238,24 +262,26 @@ module hiddenTerminalC {
 
           if (call AMSend.send(AM_BROADCAST_ADDR, &packet, sizeof(my_msg_t)) == SUCCESS) {
             cts = FALSE;
-            call WaitTimer.startOneShot(WAIT_INT)
-            return;
+            call WaitTimer.startOneShot(WAIT_INT);
+            return buf;
           }
           break;
 
         case DATA:
           // Process data
+          call WaitTimer.stop();
+          
           dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", req->seq_num, req->sender_id);
           call Read.read();
 
-          if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
+          if (req->seq_num == mote_seq_num[req->sender_id - 2]) {
             dbg("Radio", "Base Station: Packet received is a duplicate.\n");
 
-            mote_trans[msg->sender_id - 2]++;
+            mote_trans[req->sender_id - 2]++;
           }
           else {
-            mote_seq_num[msg->sender_id - 2] = msg->seq_num;
-            mote_trans[msg->sender_id - 2] += msg->n_retries + 1;
+            mote_seq_num[req->sender_id - 2] = req->seq_num;
+            mote_trans[req->sender_id - 2] += req->n_retries + 1;
           }
 
           cts = TRUE;
@@ -266,6 +292,7 @@ module hiddenTerminalC {
       switch (req->type) {
         case RTS:
           // Some mote is trying to sync with the base, wait
+          dbg("Timer", "Mote #%d: A RTS was received, stalling...\n", TOS_NODE_ID);
           busy = TRUE;
 
           call WaitTimer.startOneShot(WAIT_INT);
@@ -274,13 +301,16 @@ module hiddenTerminalC {
         case CTS:
           if (req->sender_id == TOS_NODE_ID) {
             // The base answered, send packet
-            call WaitTimer.stop()
-            cts == TRUE;
+            dbg("Timer", "Mote #%d: Base Station answered with a CTS!, sending...\n", TOS_NODE_ID);
+            call WaitTimer.stop();
+            cts = TRUE;
+            waiting = FALSE;
 
-            sendNextPacket()
+            sendNextPacket();
           }
           else {
             // Some mote was granted transmission right, wait
+            dbg("Timer", "Mote #%d: A CTS was received, stalling...\n", TOS_NODE_ID);
             busy = TRUE;
 
             call WaitTimer.startOneShot(WAIT_INT);
@@ -289,7 +319,7 @@ module hiddenTerminalC {
       }
     }
 
-    return;
+    return buf;
   }
   
   
@@ -331,7 +361,9 @@ module hiddenTerminalC {
 
     if (TOS_NODE_ID % 2 == 0) {
       if (csma_busy == FALSE) {
-        csma_busy = TRUE;
+      	if (cts == TRUE) {
+          csma_busy = TRUE;
+      	}
       }
       else {
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
@@ -373,6 +405,8 @@ module hiddenTerminalC {
     }
     else {
       // Set ACK request and send packet to the station
+      msg->type = DATA;
+      
       if (call PacketAcknowledgements.requestAck(&packet) == SUCCESS) {
         if (call AMSend.send(BASE_STATION_ID, &packet, sizeof(my_msg_t)) == SUCCESS) {
           dbg("Timer", "Mote #%d: Packet n°%d sent, waiting for ACK\n", TOS_NODE_ID, msg->seq_num);
