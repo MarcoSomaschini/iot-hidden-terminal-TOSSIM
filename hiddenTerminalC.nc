@@ -10,7 +10,8 @@
 #include "Timer.h"
 #include <math.h>
 
-bool busy = FALSE;
+bool csma_busy = FALSE;
+bool stop = FALSE;
 
 module hiddenTerminalC {
 
@@ -25,7 +26,9 @@ module hiddenTerminalC {
     interface Packet;
 
 	  //interface for timer
-    interface Timer<TMilli> as MilliTimer;
+    interface Timer<TMilli> as StopTimer;
+    interface Timer<TMilli> as PoissonTimer;
+    interface Timer<TMilli> as WaitTimer;
 
     //other interfaces, if needed
     interface Random;
@@ -44,16 +47,19 @@ module hiddenTerminalC {
   uint8_t n_retries = 0;
   uint16_t seq_num = 1;
 
+  uint8_t nb = 0;
+  uint8_t be = 0;
+
+  bool cts;
+  bool waiting == FALSE;
+  bool busy == FALSE;
+
   // BASE_STATION
-  uint8_t counter = 0;
   // Current sequence number of each mote
   uint16_t mote_seq_num[] = {0, 0, 0, 0, 0};
   uint16_t mote_trans[] = {0, 0, 0, 0, 0};
   
   message_t packet;
-
-  uint8_t nb = 0;
-  uint8_t be = 0;
 
   // Possion simulation function
   uint32_t millisToNextPoisson(uint8_t l);
@@ -83,11 +89,16 @@ module hiddenTerminalC {
     
     if (TOS_NODE_ID == BASE_STATION_ID) {
       // This node is elected as BASE STATION
-      // Every LOG_INTERVAL (10) secs print motes stats
-      call MilliTimer.startPeriodic(LOG_INTERVAL * 1000);
+      cts = TRUE;
+
+      // After STOP_TIME print motes stats and stop accetting packets
+      call StopTimer.startOneShot(STOP_INT * 1000);
     }
     else {
       // The other nodes are SENDER MOTES
+      cts = FALSE;
+
+      // Set Poisson lambda
       switch (TOS_NODE_ID) {
         case 2:
           lambda = LAMBDA_1;
@@ -110,7 +121,7 @@ module hiddenTerminalC {
       dt = millisToNextPoisson(lambda);
 
       // Set first Timer to start routine
-      call MilliTimer.startOneShot(dt);
+      call PoissonTimer.startOneShot(dt);
     }
   }
 
@@ -120,28 +131,43 @@ module hiddenTerminalC {
   }
 
 
-  //***************** MilliTimer interface ********************//
-  event void MilliTimer.fired() {
-    if (TOS_NODE_ID == BASE_STATION_ID) {
-      uint8_t id;
-      float time_elapsed;
-
-      counter++;
-      time_elapsed = (float) counter * LOG_INTERVAL;
-
-      for (id = 2; id < 7; id++) {      
-        dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / time_elapsed);
-      }
-      for (id = 2; id < 7; id++) {
-      	float psr = (float) mote_seq_num[id - 2]/mote_trans[id - 2];
-      
-        dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
-      }
+  //***************** Timer interface ********************//
+  event void PoissonTimer.fired() {
+    if (stop == TRUE) {
+      return;
     }
-    else {
-      // Generate and send packet
+
+    // Generate and send packet
+    sendNextPacket();
+  }
+
+
+  event void WaitTimer.fired() {
+    // MOTES ONLY
+    busy = FALSE;
+
+    if (waiting == TRUE) {
+      waiting = FALSE;
+
       sendNextPacket();
     }
+  }
+
+
+  event void StopTimer.fired() {
+    // BASE STATION: Log motes transmissions stats and terminate operations
+    uint8_t id;
+
+    for (id = 2; id < 7; id++) {
+      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / STOP_INT);
+    }
+    for (id = 2; id < 7; id++) {
+      float psr = (float) mote_seq_num[id - 2] / mote_trans[id - 2];
+
+      dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
+    }
+
+    stop = TRUE;
   }
   
 
@@ -166,7 +192,7 @@ module hiddenTerminalC {
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda);
       // Set new Timer
-      call MilliTimer.startOneShot(dt);
+      call PoissonTimer.startOneShot(dt);
     }
     else {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
@@ -188,40 +214,88 @@ module hiddenTerminalC {
 
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
-    // BASE STATION ONLY (as long as no RTS/CTS is used)
-    uint16_t a;
-    my_msg_t* msg;    
+    my_msg_t* req;
+    my_msg_t* resp;
 
-    if (len != sizeof(my_msg_t)) {
-      dbg("Radio", "Base Station: Packet received is malformed.\n");
+    req = (my_msg_t*) payload;
 
-      return buf;
-    }
+    if (TOS_NODE_ID == BASE_STATION_ID) {
+      switch (req->type) {
+        case RTS:
+          // Send CTS
+          if (cts == FALSE) {
+            return;
+          }
+          dbg("Radio", "Base Station: RTS received from mote #%d\n", req->sender_id);
 
-    // Inspect message and update mote's PER
-    msg = (my_msg_t*) payload;
-    dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", msg->seq_num, msg->sender_id);
-    
-    a = call Read.read();
+          do {
+            resp = (my_msg_t*) call Packet.getPayload(&packet, sizeof(my_msg_t));
+          }
+          while (resp == NULL);
 
-    if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
-      dbg("Radio", "Base Station: Packet received is a duplicate.\n");
+          resp->type = CTS;
+          resp->sender_id = req->sender_id;
 
-      // What if the duplicate has a different number of retries?
-      mote_trans[msg->sender_id - 2]++;
+          if (call AMSend.send(AM_BROADCAST_ADDR, &packet, sizeof(my_msg_t)) == SUCCESS) {
+            cts = FALSE;
+            call WaitTimer.startOneShot(WAIT_INT)
+            return;
+          }
+          break;
+
+        case DATA:
+          // Process data
+          dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", req->seq_num, req->sender_id);
+          call Read.read();
+
+          if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
+            dbg("Radio", "Base Station: Packet received is a duplicate.\n");
+
+            mote_trans[msg->sender_id - 2]++;
+          }
+          else {
+            mote_seq_num[msg->sender_id - 2] = msg->seq_num;
+            mote_trans[msg->sender_id - 2] += msg->n_retries + 1;
+          }
+
+          cts = TRUE;
+          break;
+      }
     }
     else {
-      mote_seq_num[msg->sender_id - 2] = msg->seq_num;
-      mote_trans[msg->sender_id - 2] += msg->n_retries + 1;
+      switch (req->type) {
+        case RTS:
+          // Some mote is trying to sync with the base, wait
+          busy = TRUE;
+
+          call WaitTimer.startOneShot(WAIT_INT);
+          break;
+
+        case CTS:
+          if (req->sender_id == TOS_NODE_ID) {
+            // The base answered, send packet
+            call WaitTimer.stop()
+            cts == TRUE;
+
+            sendNextPacket()
+          }
+          else {
+            // Some mote was granted transmission right, wait
+            busy = TRUE;
+
+            call WaitTimer.startOneShot(WAIT_INT);
+          }
+          break;
+      }
     }
 
-    return buf;
+    return;
   }
   
   
   //************************* Read interface **********************//
   event void Read.readDone(error_t result, uint16_t data) {
-    // Do nothing, only used to simulate some packet computation
+    // Do nothing, only used to simulate some packet computation (waste time)
   }
 
 
@@ -246,11 +320,18 @@ module hiddenTerminalC {
     uint16_t n_periods;
     uint16_t p_unif;
     uint32_t backoff_time;
-	my_msg_t* msg;
+  	my_msg_t* msg;
+
+    if (busy == TRUE) {
+      dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
+
+      call PoissonTimer.startOneShot(WAIT_INT);
+      return;
+    }
 
     if (TOS_NODE_ID % 2 == 0) {
-      if (busy == FALSE) {
-        busy = TRUE;
+      if (csma_busy == FALSE) {
+        csma_busy = TRUE;
       }
       else {
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
@@ -264,7 +345,7 @@ module hiddenTerminalC {
         n_periods = (p_unif % (uint16_t) pow(2, be)) + 1;
         backoff_time = (uint32_t) BACKOFFPERIOD * n_periods;
 
-        call MilliTimer.startOneShot(backoff_time);
+        call PoissonTimer.startOneShot(backoff_time);
         return;
       }
     }
@@ -278,20 +359,30 @@ module hiddenTerminalC {
     msg->seq_num = seq_num;
     msg->n_retries = n_retries;
 
-    // Set ACK request and send packet to the station
-    if (call PacketAcknowledgements.requestAck(&packet) == SUCCESS) {
-      if (call AMSend.send(BASE_STATION_ID, &packet, sizeof(my_msg_t)) == SUCCESS) {
-        dbg("Timer", "Mote #%d: Packet n°%d sent, waiting for ACK\n", TOS_NODE_ID, msg->seq_num);
+    if (cts == FALSE) {
+      // Send RTS in broadcast
+      msg->type = RTS;
 
+      if (call AMSend.send(AM_BROADCAST_ADDR, &packet, sizeof(my_msg_t)) == SUCCESS) {
+        dbg("Timer", "Mote #%d: RTS sent, waiting for response...\n", TOS_NODE_ID, msg->seq_num);
+        waiting = TRUE;
+
+        call WaitTimer.startOneShot(WAIT_INT);
         return;
       }
     }
+    else {
+      // Set ACK request and send packet to the station
+      if (call PacketAcknowledgements.requestAck(&packet) == SUCCESS) {
+        if (call AMSend.send(BASE_STATION_ID, &packet, sizeof(my_msg_t)) == SUCCESS) {
+          dbg("Timer", "Mote #%d: Packet n°%d sent, waiting for ACK\n", TOS_NODE_ID, msg->seq_num);
+          cts = FALSE;
 
-    // If something goes wrong, retry
-    dbg("Timer","Mote #%d: Failed to send, retrying...\n");
-    sendNextPacket();
+          return;
+        }
+      }
+    }
 
-    return;
   }
 
 

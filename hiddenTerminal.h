@@ -16,10 +16,17 @@
 #define MAXBE 7
 #define BACKOFFPERIOD 10
 
-#define LOG_INTERVAL 10
+#define WAIT_INT 250
+#define STOP_INT 30
+
+#define RTS 0
+#define CTS 1
+#define DATA 2
 
 // Generic message
 typedef nx_struct my_msg {
+  // Message type (RTS, CTS)
+  nx_uint8_t type;
   // Sender id
   nx_uint8_t sender_id;
   // Message sequence number
@@ -28,19 +35,8 @@ typedef nx_struct my_msg {
   nx_uint8_t n_retries;
 } my_msg_t;
 
-// RTS/CTS protocol messages
-typedef nx_struct handshake_msg {
-  // Message type (RTS, CTS)
-  nx_uint8_t type;
-  // Sender id
-  nx_uint8_t sender_id;
-} handshake_msg_t;
-
 enum{
     AM_MY_MSG = 6,
 };
-
-#define RTS 0
-#define CTS 1
 
 #endif
