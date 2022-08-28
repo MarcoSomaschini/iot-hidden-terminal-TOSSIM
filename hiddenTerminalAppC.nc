@@ -20,6 +20,7 @@ implementation {
   components new TimerMilliC();
   components new AMSenderC(AM_MY_MSG);
   components new AMReceiverC(AM_MY_MSG);
+  components new FakeSensorC();
 
 
 /****** INTERFACES *****/
@@ -40,6 +41,8 @@ implementation {
   App.Random -> RandomC;
   // ACKS
   App.PacketAcknowledgements -> AMSenderC.Acks;
+  // Fake Sensor read
+  App.Read -> FakeSensorC;
 
 }
 

@@ -7,24 +7,24 @@
 
 #define BASE_STATION_ID 1
 
-#define LAMBDA_1 1
-#define LAMBDA_2 2
-#define LAMBDA_3 3
-#define LAMBDA_4 4
-#define LAMBDA_5 5
+#define LAMBDA_1 20
+#define LAMBDA_2 10
+#define LAMBDA_3 10
+#define LAMBDA_4 5
+#define LAMBDA_5 10
 
-#define MAXBE 5
-#define BACKOFFPERIOD 500
+#define MAXBE 7
+#define BACKOFFPERIOD 10
 
 #define LOG_INTERVAL 10
 
 // Generic message
 typedef nx_struct my_msg {
-	// Sender id
+  // Sender id
   nx_uint8_t sender_id;
   // Message sequence number
   nx_uint16_t seq_num;
-	// Number of retries
+  // Number of retries
   nx_uint8_t n_retries;
 } my_msg_t;
 

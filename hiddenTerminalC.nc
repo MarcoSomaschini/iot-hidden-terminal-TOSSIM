@@ -10,6 +10,8 @@
 #include "Timer.h"
 #include <math.h>
 
+bool busy = FALSE;
+
 module hiddenTerminalC {
 
   uses {
@@ -28,6 +30,9 @@ module hiddenTerminalC {
     //other interfaces, if needed
     interface Random;
     interface PacketAcknowledgements;
+    
+    // Interface used to perform sensor reading (to get the value from a sensor)
+    interface Read<uint16_t>;
 
   }
 
@@ -47,9 +52,8 @@ module hiddenTerminalC {
   
   message_t packet;
 
-  bool busy = FALSE;
-  uint8_t nb[] = {0, 0, 0};
-  uint8_t be[] = {0, 0, 0};
+  uint8_t nb = 0;
+  uint8_t be = 0;
 
   // Possion simulation function
   uint32_t millisToNextPoisson(uint8_t l);
@@ -142,7 +146,7 @@ module hiddenTerminalC {
   
 
   //********************* AMSend interface ****************//
-  event void AMSend.sendDone(message_t* buf,error_t err) {
+  event void AMSend.sendDone(message_t* buf, error_t err) {
     // MOTES ONLY (as long as no RTS/CTS is used)
     uint32_t dt;
 
@@ -152,13 +156,12 @@ module hiddenTerminalC {
 
       seq_num++;
       n_retries = 0;
-
       if (TOS_NODE_ID % 2 == 0) {
         busy = FALSE;
 
-        nb[TOS_NODE_ID / 2 - 1] = 0;
-        be[TOS_NODE_ID / 2 - 1] = 0;
-      }
+        nb = 0;
+        be = 0;
+    }
 
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda);
@@ -169,6 +172,12 @@ module hiddenTerminalC {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
 
       n_retries++;
+      if (TOS_NODE_ID % 2 == 0) {
+        busy = FALSE;
+
+        nb = 0;
+        be = 0;
+    }
 
       sendNextPacket();
     }
@@ -180,7 +189,8 @@ module hiddenTerminalC {
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
     // BASE STATION ONLY (as long as no RTS/CTS is used)
-    my_msg_t* msg;
+    uint16_t a;
+    my_msg_t* msg;    
 
     if (len != sizeof(my_msg_t)) {
       dbg("Radio", "Base Station: Packet received is malformed.\n");
@@ -191,6 +201,8 @@ module hiddenTerminalC {
     // Inspect message and update mote's PER
     msg = (my_msg_t*) payload;
     dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", msg->seq_num, msg->sender_id);
+    
+    a = call Read.read();
 
     if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
       dbg("Radio", "Base Station: Packet received is a duplicate.\n");
@@ -204,6 +216,12 @@ module hiddenTerminalC {
     }
 
     return buf;
+  }
+  
+  
+  //************************* Read interface **********************//
+  event void Read.readDone(error_t result, uint16_t data) {
+    // Do nothing, only used to simulate some packet computation
   }
 
 
@@ -225,26 +243,26 @@ module hiddenTerminalC {
 
 
   void sendNextPacket() {
-    uint8_t pos;
+    uint16_t n_periods;
+    uint16_t p_unif;
     uint32_t backoff_time;
-    float p_unif;
-	  my_msg_t* msg;
+	my_msg_t* msg;
 
     if (TOS_NODE_ID % 2 == 0) {
       if (busy == FALSE) {
-        busy == TRUE
+        busy = TRUE;
       }
       else {
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
-        pos = TOS_NODE_ID / 2 - 1;
 
-        nb[pos]++;
-        if (be[pos] < MAXBE) {
-          be[pos]++;
+        nb++;
+        if (be < MAXBE) {
+          be++;
         }
 
         p_unif = call Random.rand16();
-        backoff_time = (uint32_t) (pow(2, be[pos]) * p_unif) / UINT16_MAX;
+        n_periods = (p_unif % (uint16_t) pow(2, be)) + 1;
+        backoff_time = (uint32_t) BACKOFFPERIOD * n_periods;
 
         call MilliTimer.startOneShot(backoff_time);
         return;
