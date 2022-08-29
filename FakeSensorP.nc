@@ -16,7 +16,7 @@ generic module FakeSensorP() {
 
 	//***************** Boot interface ********************//
 	command error_t Read.read(){
-		call Timer0.startOneShot( 100 );
+		call Timer0.startOneShot( 50 );
 		return SUCCESS;
 	}
 
