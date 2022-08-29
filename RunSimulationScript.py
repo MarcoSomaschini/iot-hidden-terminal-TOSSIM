@@ -101,7 +101,7 @@ print "Start simulation with TOSSIM! \n\n\n";
 
 while True:
     t.runNextEvent()  
-    if t.time() > 60 * t.ticksPerSecond():
+    if t.time() > 300 * t.ticksPerSecond():
         break
 	
 print "\n\n\nSimulation finished!";

@@ -101,19 +101,19 @@ module hiddenTerminalC {
       // Set Poisson lambda
       switch (TOS_NODE_ID) {
         case 2:
-          lambda = LAMBDA_1;
-          break;
-        case 3:
           lambda = LAMBDA_2;
           break;
-        case 4:
+        case 3:
           lambda = LAMBDA_3;
           break;
-        case 5:
+        case 4:
           lambda = LAMBDA_4;
           break;
-        case 6:
+        case 5:
           lambda = LAMBDA_5;
+          break;
+        case 6:
+          lambda = LAMBDA_6;
           break;
       }
 
@@ -161,7 +161,7 @@ module hiddenTerminalC {
         sendNextPacket();
       }
       else {
-      	dbg("Timer","Mote #%d: CTS was not received, stop stalling.\n", TOS_NODE_ID);
+      	dbg("Timer","Mote #%d: Timer expired, stop stalling.\n", TOS_NODE_ID);
       }
     }
   }
@@ -171,8 +171,6 @@ module hiddenTerminalC {
     // BASE STATION: Log motes transmissions stats and terminate operations
     uint8_t id;
     
-    dbg("Timer","%d\n", TOS_NODE_ID);
-
     for (id = 2; id < 7; id++) {
       dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
     }
@@ -352,16 +350,10 @@ module hiddenTerminalC {
     uint32_t backoff_time;
   	my_msg_t* msg;
 
-    if (busy == TRUE) {
-      dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
-
-      call PoissonTimer.startOneShot(WAIT_INT);
-      return;
-    }
 
     if (TOS_NODE_ID % 2 == 0) {
       if (csma_busy == FALSE) {
-      	if (cts == TRUE) {
+      	if (cts == TRUE && busy == FALSE) {
           csma_busy = TRUE;
       	}
       }
@@ -380,6 +372,13 @@ module hiddenTerminalC {
         call PoissonTimer.startOneShot(backoff_time);
         return;
       }
+    }
+    
+    if (busy == TRUE) {
+      dbg("Timer", "Mote #%d: Channel is busy, waiting...\n", TOS_NODE_ID);
+      
+      call PoissonTimer.startOneShot(WAIT_INT);
+      return;
     }
   
     do {
