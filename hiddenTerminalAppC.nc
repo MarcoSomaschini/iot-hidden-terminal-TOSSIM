@@ -1,8 +1,8 @@
 /**
- *  Configuration file for wiring of sendAckC module to other common 
+ *  Configuration file for wiring of hiddenTerminal module to other common
  *  components needed for proper functioning
  *
- *  @author 
+ *  @author Marco Somaschini 10561636
  */
 
 #include "hiddenTerminal.h"
@@ -37,7 +37,7 @@ implementation {
   App.SplitControl -> ActiveMessageC;
   // Interfaces to access package fields
   App.Packet -> AMSenderC;
-  // Timer interface
+  // Timer interfaces
   App.PoissonTimer -> PoissonTimer;
   App.WaitTimer -> WaitTimer;
   App.StopTimer -> StopTimer;

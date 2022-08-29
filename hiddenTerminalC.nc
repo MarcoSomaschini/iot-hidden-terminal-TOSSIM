@@ -1,41 +1,40 @@
 /**
- *  Source file for implementation of module sendAckC in which
- *  the node 1 send a request to node 2 until it receives a response.
- *  The reply message contains a reading from the Fake Sensor.
+ *  Source file for implementation of module hiddenTerminal
  *
- *  @author 
+ *  @author Marco Somaschini 10561636
  */
 
 #include "hiddenTerminal.h"
 #include "Timer.h"
 #include <math.h>
 
+// Indicates if the shared channel is free, only used by even numbered motes (2, 4, 6)
 bool csma_busy = FALSE;
+// Indicates if the base station is accepting transmissions
 bool stop = FALSE;
 
 module hiddenTerminalC {
 
   uses {
-  /****** INTERFACES *****/
 	interface Boot;
 	
-    //interfaces for communication
-    interface Receive;
-    interface AMSend;
-    interface SplitControl;
-    interface Packet;
+  // Interfaces for communication
+  interface Receive;
+  interface AMSend;
+  interface SplitControl;
+  interface Packet;
 
-	//interface for timer
-    interface Timer<TMilli> as PoissonTimer;
-    interface Timer<TMilli> as WaitTimer;
-    interface Timer<TMilli> as StopTimer;
+  // Interfaces for timers
+  interface Timer<TMilli> as PoissonTimer;
+  interface Timer<TMilli> as WaitTimer;
+  interface Timer<TMilli> as StopTimer;
 
-    //other interfaces, if needed
-    interface Random;
-    interface PacketAcknowledgements;
-    
-    // Interface used to perform sensor reading (to get the value from a sensor)
-    interface Read<uint16_t>;
+  // Other interfaces
+  interface Random;
+  interface PacketAcknowledgements;
+
+  // Interface used to perform sensor reading (to get the value from a sensor)
+  interface Read<uint16_t>;
 
   }
 
@@ -44,24 +43,32 @@ module hiddenTerminalC {
   // SENDER MOTES
   // Lambda associated with the motes
   uint8_t lambda;
+  // Current packet parameters
   uint8_t n_retries = 0;
   uint16_t seq_num = 1;
 
+  // CSMA related variables, only used by even numbered motes (2, 4, 6)
   uint8_t nb = 0;
   uint8_t be = 0;
 
-  bool cts;
+  // Indicates if the mote has sent an RTS and thus is waiting for a CTS
   bool waiting = FALSE;
+  // Indicates if the mote has received an RTS/CTS and thus should stall transmissions
   bool busy = FALSE;
 
   // BASE_STATION
   // Current sequence number of each mote
   uint16_t mote_seq_num[] = {0, 0, 0, 0, 0};
   uint16_t mote_trans[] = {0, 0, 0, 0, 0};
-  
+
+  // Indicates if the mote has received a CTS and can transmit
+  // Indicates if the base station hasn't received an RTS
+  bool cts;
+
+  // OTHERS
   message_t packet;
 
-  // Possion simulation function
+  // Poisson simulation function
   uint32_t millisToNextPoisson(uint8_t l);
   // Procedure to generate and send a packet
   void sendNextPacket();
@@ -148,13 +155,17 @@ module hiddenTerminalC {
     }  
   
     if (TOS_NODE_ID == BASE_STATION_ID) {
+      // BASE STATION: The mote which sent the RTS didn't follow on, thus cts flag is reset to allow others to sync
       dbg("Timer","Base Station: After CTS, nothing was received.\n");
       cts = TRUE;
     }
     else {
+      // SENDER MOTES
+      // In any case, after the stall time has expired the channel has to be considered free
       busy = FALSE;
 
       if (waiting == TRUE) {
+        // If the mote was waiting for the CTS, sent another RTS
         dbg("Timer","Mote #%d: CTS was not received, retrying...\n", TOS_NODE_ID);
         waiting = FALSE;
 
@@ -170,9 +181,15 @@ module hiddenTerminalC {
   event void StopTimer.fired() {
     // BASE STATION: Log motes transmissions stats and terminate operations
     uint8_t id;
-    
+
+    dbg("Timer","\n");
+    dbg("Timer","\n");
+    dbg("Timer","!END OF TRANSMISSIONS!\n");
+    dbg("Timer","\n");
+    dbg("Timer","\n");
+
     for (id = 2; id < 7; id++) {
-      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
+      dbg("Timer","Base Station: Mote #%d AVG transmission rate is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
     }
     for (id = 2; id < 7; id++) {
       float psr = (float) mote_seq_num[id - 2] / mote_trans[id - 2];
@@ -198,12 +215,13 @@ module hiddenTerminalC {
     
     cts = FALSE;
 
-    // Wait for ACK, resend if not acked
+    // Wait for packet ACK, resend if not acked
     if (call PacketAcknowledgements.wasAcked(buf) == TRUE) {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d received!\n", TOS_NODE_ID, seq_num);
 
       seq_num++;
       n_retries = 0;
+      // Even motes need to restore CSMA params
       if (TOS_NODE_ID % 2 == 0) {
         csma_busy = FALSE;
 
@@ -219,6 +237,7 @@ module hiddenTerminalC {
     else {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
 
+      // Increase number of retries for this packet
       n_retries++;
       if (TOS_NODE_ID % 2 == 0) {
         csma_busy = FALSE;
@@ -242,9 +261,11 @@ module hiddenTerminalC {
     req = (my_msg_t*) payload;
 
     if (TOS_NODE_ID == BASE_STATION_ID) {
+      // BASE STATION
       switch (req->type) {
         case RTS:
-          // Send CTS
+          // Upon receiving an RTS, send a CTS
+          // If a mote RTS is already being handled, ignore
           if (cts == FALSE) {
             return buf;
           }
@@ -258,6 +279,7 @@ module hiddenTerminalC {
           resp->type = CTS;
           resp->sender_id = req->sender_id;
 
+          // Send CTS in broadcast
           if (call AMSend.send(AM_BROADCAST_ADDR, &packet, sizeof(my_msg_t)) == SUCCESS) {
             cts = FALSE;
             call WaitTimer.startOneShot(WAIT_INT);
@@ -270,8 +292,10 @@ module hiddenTerminalC {
           call WaitTimer.stop();
           
           dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", req->seq_num, req->sender_id);
+          // Process packet
           call Read.read();
 
+          // Update mote trasmissions status
           if (req->seq_num == mote_seq_num[req->sender_id - 2]) {
             dbg("Radio", "Base Station: Packet received is a duplicate.\n");
 
@@ -287,9 +311,10 @@ module hiddenTerminalC {
       }
     }
     else {
+      // SENDER MOTES
       switch (req->type) {
         case RTS:
-          // Some mote is trying to sync with the base, wait
+          // Some mote is trying to sync with the base station, stall
           dbg("Timer", "Mote #%d: A RTS was received, stalling...\n", TOS_NODE_ID);
           busy = TRUE;
 
@@ -298,7 +323,7 @@ module hiddenTerminalC {
 
         case CTS:
           if (req->sender_id == TOS_NODE_ID) {
-            // The base answered, send packet
+            // The base station answered, send packet
             dbg("Timer", "Mote #%d: Base Station answered with a CTS!, sending...\n", TOS_NODE_ID);
             call WaitTimer.stop();
             cts = TRUE;
@@ -307,7 +332,7 @@ module hiddenTerminalC {
             sendNextPacket();
           }
           else {
-            // Some mote was granted transmission right, wait
+            // Some mote was granted transmission right, stall
             dbg("Timer", "Mote #%d: A CTS was received, stalling...\n", TOS_NODE_ID);
             busy = TRUE;
 
@@ -323,7 +348,7 @@ module hiddenTerminalC {
   
   //************************* Read interface **********************//
   event void Read.readDone(error_t result, uint16_t data) {
-    // Do nothing, only used to simulate some packet computation (waste time)
+    // Does nothing: only used to simulate some packet computation (waste time)
   }
 
 
@@ -334,10 +359,12 @@ module hiddenTerminalC {
     float milliLambda = (float) l;
     
     milliLambda = milliLambda / 1000;
-    
+
+    // Generate random number between 0 and 1
     p_unif = call Random.rand16();
     p_unif = p_unif / UINT16_MAX;
-    
+
+    // Compute time to next packet according to a Poisson distribution
     int_arr_time = -logf(1 - p_unif) / milliLambda;
 	
     return (uint32_t) int_arr_time;
@@ -350,14 +377,16 @@ module hiddenTerminalC {
     uint32_t backoff_time;
   	my_msg_t* msg;
 
-
+    // EVEN MOTES: Check if the channel is busy
     if (TOS_NODE_ID % 2 == 0) {
       if (csma_busy == FALSE) {
+        // If the channel is free, occupy it
       	if (cts == TRUE && busy == FALSE) {
           csma_busy = TRUE;
       	}
       }
       else {
+        // Otherwise, back off
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
 
         nb++;
@@ -365,6 +394,7 @@ module hiddenTerminalC {
           be++;
         }
 
+        // Generate number of backoff periods between [0, 2^be - 1]
         p_unif = call Random.rand16();
         n_periods = (p_unif % (uint16_t) pow(2, be)) + 1;
         backoff_time = (uint32_t) BACKOFFPERIOD * n_periods;
@@ -373,14 +403,16 @@ module hiddenTerminalC {
         return;
       }
     }
-    
+
+    // Delay the timer if the mote is stalling
     if (busy == TRUE) {
       dbg("Timer", "Mote #%d: Channel is busy, waiting...\n", TOS_NODE_ID);
       
       call PoissonTimer.startOneShot(WAIT_INT);
       return;
     }
-  
+
+    // Prepare the message
     do {
       msg = (my_msg_t*) call Packet.getPayload(&packet, sizeof(my_msg_t));
     }
@@ -390,6 +422,7 @@ module hiddenTerminalC {
     msg->seq_num = seq_num;
     msg->n_retries = n_retries;
 
+    // Obtain the transmissions rights
     if (cts == FALSE) {
       // Send RTS in broadcast
       msg->type = RTS;
@@ -415,7 +448,6 @@ module hiddenTerminalC {
         }
       }
     }
-
   }
 
 
