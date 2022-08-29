@@ -1,8 +1,8 @@
 /**
- *  Configuration file for wiring of sendAckC module to other common 
+ *  Configuration file for wiring of hiddenTerminal module to other common
  *  components needed for proper functioning
  *
- *  @author 
+ *  @author Marco Somaschini 10561636
  */
 
 #include "hiddenTerminal.h"

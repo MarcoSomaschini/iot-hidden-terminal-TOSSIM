@@ -1,40 +1,39 @@
 /**
- *  Source file for implementation of module sendAckC in which
- *  the node 1 send a request to node 2 until it receives a response.
- *  The reply message contains a reading from the Fake Sensor.
+ *  Source file for implementation of module hiddenTerminal
  *
- *  @author 
+ *  @author Marco Somaschini 10561636
  */
 
 #include "hiddenTerminal.h"
 #include "Timer.h"
 #include <math.h>
 
+// Indicates if the shared channel is free, only used by even numbered motes (2, 4, 6)
 bool csma_busy = FALSE;
+// Indicates if the base station is accepting transmissions
 bool stop = FALSE;
 
 module hiddenTerminalC {
 
   uses {
-    /****** INTERFACES *****/
-    interface Boot;
-	
-    //interfaces for communication
-    interface Receive;
-    interface AMSend;
-    interface SplitControl;
-    interface Packet;
+  interface Boot;
 
-	  //interface for timer
-    interface Timer<TMilli> as PoissonTimer;
-    interface Timer<TMilli> as StopTimer;
+  // Interfaces for communication
+  interface Receive;
+  interface AMSend;
+  interface SplitControl;
+  interface Packet;
 
-    //other interfaces, if needed
-    interface Random;
-    interface PacketAcknowledgements;
-    
-    // Interface used to perform sensor reading (to get the value from a sensor)
-    interface Read<uint16_t>;
+  // Interfaces for timer
+  interface Timer<TMilli> as PoissonTimer;
+  interface Timer<TMilli> as StopTimer;
+
+  // Other interfaces
+  interface Random;
+  interface PacketAcknowledgements;
+
+  // Interface used to perform sensor reading (to get the value from a sensor)
+  interface Read<uint16_t>;
 
   }
 
@@ -43,9 +42,11 @@ module hiddenTerminalC {
   // SENDER MOTES
   // Lambda associated with the motes
   uint8_t lambda;
+  // Current packet parameters
   uint8_t n_retries = 0;
   uint16_t seq_num = 1;
 
+  // CSMA related variables, only used by even numbered motes (2, 4, 6)
   uint8_t nb = 0;
   uint8_t be = 0;
 
@@ -54,7 +55,8 @@ module hiddenTerminalC {
   // Current sequence number of each mote
   uint16_t mote_seq_num[] = {0, 0, 0, 0, 0};
   uint16_t mote_trans[] = {0, 0, 0, 0, 0};
-  
+
+  // OTHERS
   message_t packet;
 
   // Possion simulation function
@@ -167,6 +169,7 @@ module hiddenTerminalC {
 
       seq_num++;
       n_retries = 0;
+      // Even motes need to restore CSMA params
       if (TOS_NODE_ID % 2 == 0) {
         csma_busy = FALSE;
 
@@ -182,6 +185,7 @@ module hiddenTerminalC {
     else {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
 
+      // Increase number of retries for this packet
       n_retries++;
       if (TOS_NODE_ID % 2 == 0) {
         csma_busy = FALSE;
@@ -199,15 +203,15 @@ module hiddenTerminalC {
 
   //***************************** Receive interface *****************//
   event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
-    // BASE STATION ONLY (as long as no RTS/CTS is used)
-    uint16_t a;
+    // BASE STATION ONLY (since no RTS/CTS is used)
     my_msg_t* msg;
 
     // Inspect message and update mote's PER
     msg = (my_msg_t*) payload;
     dbg("Radio", "Base Station: Packet n°%d from mote #%d received!\n", msg->seq_num, msg->sender_id);
-    
-    a = call Read.read();
+
+    // Process packet
+    call Read.read();
 
     if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
       dbg("Radio", "Base Station: Packet received is a duplicate.\n");
@@ -225,7 +229,7 @@ module hiddenTerminalC {
   
   //************************* Read interface **********************//
   event void Read.readDone(error_t result, uint16_t data) {
-    // Do nothing, only used to simulate some packet computation
+    // Does nothing: only used to simulate some packet computation (waste time)
   }
 
 
@@ -236,10 +240,12 @@ module hiddenTerminalC {
     float milliLambda = (float) l;
     
     milliLambda = milliLambda / 1000;
-    
+
+    // Generate random number between 0 and 1
     p_unif = call Random.rand16();
     p_unif = p_unif / UINT16_MAX;
-    
+
+    // Compute time to next packet according to a Poisson distribution
     int_arr_time = -logf(1 - p_unif) / milliLambda;
 	
     return (uint32_t) int_arr_time;
@@ -252,11 +258,14 @@ module hiddenTerminalC {
     uint32_t backoff_time;
 	  my_msg_t* msg;
 
+    // EVEN MOTES: Check if the channel is busy
     if (TOS_NODE_ID % 2 == 0) {
       if (csma_busy == FALSE) {
+        // If the channel is free, occupy it
         csma_busy = TRUE;
       }
       else {
+        // Otherwise, back off
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
 
         nb++;
@@ -264,6 +273,7 @@ module hiddenTerminalC {
           be++;
         }
 
+        // Generate number of backoff periods between [0, 2^be - 1]
         p_unif = call Random.rand16();
         n_periods = (p_unif % (uint16_t) pow(2, be)) + 1;
         backoff_time = (uint32_t) BACKOFFPERIOD * n_periods;
@@ -272,7 +282,8 @@ module hiddenTerminalC {
         return;
       }
     }
-  
+
+    // Prepare the message
     do {
       msg = (my_msg_t*) call Packet.getPayload(&packet, sizeof(my_msg_t));
     }
