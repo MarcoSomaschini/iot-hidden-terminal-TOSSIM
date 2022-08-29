@@ -136,9 +136,15 @@ module hiddenTerminalC {
   event void StopTimer.fired() {
     // BASE STATION: Log motes transmissions stats and terminate operations
     uint8_t id;
+    
+    dbg("Timer","\n");
+    dbg("Timer","\n");
+    dbg("Timer","!END OF TRANSMISSIONS!\n");
+    dbg("Timer","\n");
+    dbg("Timer","\n");
 
     for (id = 2; id < 7; id++) {
-      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
+      dbg("Timer","Base Station: Mote #%d AVG transmission rate is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
     }
     for (id = 2; id < 7; id++) {
       float psr = (float) mote_seq_num[id - 2] / mote_trans[id - 2];
