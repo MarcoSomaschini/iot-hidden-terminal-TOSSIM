@@ -10,13 +10,14 @@
 #include "Timer.h"
 #include <math.h>
 
-bool busy = FALSE;
+bool csma_busy = FALSE;
+bool stop = FALSE;
 
 module hiddenTerminalC {
 
   uses {
-  /****** INTERFACES *****/
-	interface Boot;
+    /****** INTERFACES *****/
+    interface Boot;
 	
     //interfaces for communication
     interface Receive;
@@ -25,7 +26,8 @@ module hiddenTerminalC {
     interface Packet;
 
 	  //interface for timer
-    interface Timer<TMilli> as MilliTimer;
+    interface Timer<TMilli> as PoissonTimer;
+    interface Timer<TMilli> as StopTimer;
 
     //other interfaces, if needed
     interface Random;
@@ -44,6 +46,9 @@ module hiddenTerminalC {
   uint8_t n_retries = 0;
   uint16_t seq_num = 1;
 
+  uint8_t nb = 0;
+  uint8_t be = 0;
+
   // BASE_STATION
   uint8_t counter = 0;
   // Current sequence number of each mote
@@ -51,9 +56,6 @@ module hiddenTerminalC {
   uint16_t mote_trans[] = {0, 0, 0, 0, 0};
   
   message_t packet;
-
-  uint8_t nb = 0;
-  uint8_t be = 0;
 
   // Possion simulation function
   uint32_t millisToNextPoisson(uint8_t l);
@@ -83,26 +85,26 @@ module hiddenTerminalC {
     
     if (TOS_NODE_ID == BASE_STATION_ID) {
       // This node is elected as BASE STATION
-      // Every LOG_INTERVAL (10) secs print motes stats
-      call MilliTimer.startPeriodic(LOG_INTERVAL * 1000);
+      // After STOP_TIME print motes stats and stop accetting packets
+      call StopTimer.startOneShot(STOP_INT * 1000);
     }
     else {
       // The other nodes are SENDER MOTES
       switch (TOS_NODE_ID) {
         case 2:
-          lambda = LAMBDA_1;
-          break;
-        case 3:
           lambda = LAMBDA_2;
           break;
-        case 4:
+        case 3:
           lambda = LAMBDA_3;
           break;
-        case 5:
+        case 4:
           lambda = LAMBDA_4;
           break;
-        case 6:
+        case 5:
           lambda = LAMBDA_5;
+          break;
+        case 6:
+          lambda = LAMBDA_6;
           break;
       }
 
@@ -110,7 +112,7 @@ module hiddenTerminalC {
       dt = millisToNextPoisson(lambda);
 
       // Set first Timer to start routine
-      call MilliTimer.startOneShot(dt);
+      call PoissonTimer.startOneShot(dt);
     }
   }
 
@@ -120,28 +122,31 @@ module hiddenTerminalC {
   }
 
 
-  //***************** MilliTimer interface ********************//
-  event void MilliTimer.fired() {
-    if (TOS_NODE_ID == BASE_STATION_ID) {
-      uint8_t id;
-      float time_elapsed;
-
-      counter++;
-      time_elapsed = (float) counter * LOG_INTERVAL;
-
-      for (id = 2; id < 7; id++) {      
-        dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, mote_seq_num[id - 2] / time_elapsed);
-      }
-      for (id = 2; id < 7; id++) {
-      	float psr = (float) mote_seq_num[id - 2]/mote_trans[id - 2];
-      
-        dbg("Timer", "Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
-      }
+  //***************** Timer interface ********************//
+  event void PoissonTimer.fired() {
+    if (stop == TRUE) {
+      return;
     }
-    else {
-      // Generate and send packet
-      sendNextPacket();
+
+    // Generate and send packet
+    sendNextPacket();
+  }
+
+
+  event void StopTimer.fired() {
+    // BASE STATION: Log motes transmissions stats and terminate operations
+    uint8_t id;
+
+    for (id = 2; id < 7; id++) {
+      dbg("Timer","Base Station: Mote #%d AVG transmissions is %f [msg/s]\n", id, (float) mote_seq_num[id - 2] / STOP_INT);
     }
+    for (id = 2; id < 7; id++) {
+      float psr = (float) mote_seq_num[id - 2] / mote_trans[id - 2];
+
+      dbg("Timer","Base Station: Mote #%d has a PER of %.1f%\n", id, (1 - psr) * 100);
+    }
+
+    stop = TRUE;
   }
   
 
@@ -157,27 +162,27 @@ module hiddenTerminalC {
       seq_num++;
       n_retries = 0;
       if (TOS_NODE_ID % 2 == 0) {
-        busy = FALSE;
+        csma_busy = FALSE;
 
         nb = 0;
         be = 0;
-    }
+      }
 
       // Simulate new inter-arrival time
       dt = millisToNextPoisson(lambda);
       // Set new Timer
-      call MilliTimer.startOneShot(dt);
+      call PoissonTimer.startOneShot(dt);
     }
     else {
       dbg("Radio", "Mote #%d: ACK for Packet n°%d was not received, resending...\n", TOS_NODE_ID, seq_num);
 
       n_retries++;
       if (TOS_NODE_ID % 2 == 0) {
-        busy = FALSE;
+        csma_busy = FALSE;
 
         nb = 0;
         be = 0;
-    }
+      }
 
       sendNextPacket();
     }
@@ -190,13 +195,7 @@ module hiddenTerminalC {
   event message_t* Receive.receive(message_t* buf, void* payload, uint8_t len) {
     // BASE STATION ONLY (as long as no RTS/CTS is used)
     uint16_t a;
-    my_msg_t* msg;    
-
-    if (len != sizeof(my_msg_t)) {
-      dbg("Radio", "Base Station: Packet received is malformed.\n");
-
-      return buf;
-    }
+    my_msg_t* msg;
 
     // Inspect message and update mote's PER
     msg = (my_msg_t*) payload;
@@ -207,7 +206,6 @@ module hiddenTerminalC {
     if (msg->seq_num == mote_seq_num[msg->sender_id - 2]) {
       dbg("Radio", "Base Station: Packet received is a duplicate.\n");
 
-      // What if the duplicate has a different number of retries?
       mote_trans[msg->sender_id - 2]++;
     }
     else {
@@ -246,11 +244,11 @@ module hiddenTerminalC {
     uint16_t n_periods;
     uint16_t p_unif;
     uint32_t backoff_time;
-	my_msg_t* msg;
+	  my_msg_t* msg;
 
     if (TOS_NODE_ID % 2 == 0) {
-      if (busy == FALSE) {
-        busy = TRUE;
+      if (csma_busy == FALSE) {
+        csma_busy = TRUE;
       }
       else {
         dbg("Timer", "Mote #%d: Channel is busy, backing off...\n", TOS_NODE_ID);
@@ -264,7 +262,7 @@ module hiddenTerminalC {
         n_periods = (p_unif % (uint16_t) pow(2, be)) + 1;
         backoff_time = (uint32_t) BACKOFFPERIOD * n_periods;
 
-        call MilliTimer.startOneShot(backoff_time);
+        call PoissonTimer.startOneShot(backoff_time);
         return;
       }
     }
@@ -286,12 +284,6 @@ module hiddenTerminalC {
         return;
       }
     }
-
-    // If something goes wrong, retry
-    dbg("Timer","Mote #%d: Failed to send, retrying...\n");
-    sendNextPacket();
-
-    return;
   }
 
 

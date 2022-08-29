@@ -17,7 +17,8 @@ implementation {
   // Other components
   components ActiveMessageC;
   components RandomC;
-  components new TimerMilliC();
+  components new TimerMilliC() as PoissonTimer;
+  components new TimerMilliC() as StopTimer;
   components new AMSenderC(AM_MY_MSG);
   components new AMReceiverC(AM_MY_MSG);
   components new FakeSensorC();
@@ -36,7 +37,8 @@ implementation {
   // Interfaces to access package fields
   App.Packet -> AMSenderC;
   // Timer interface
-  App.MilliTimer -> TimerMilliC;
+  App.PoissonTimer -> PoissonTimer;
+  App.StopTimer -> StopTimer;
   // RNG
   App.Random -> RandomC;
   // ACKS
